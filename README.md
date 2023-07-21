@@ -21,9 +21,15 @@
 	}
     ```
 5. Copy both watson.py and config.json to the same folder sherlock.py is in.
-6. Run the bot with the following command:
+6. The bot needs to be invited through your Discord Developer Portal to the server you want to use it on. I won't provide all that detail here.
+7. Run the bot with the following command:
     ```
     python watson.py
+    ```
+8. Use the bot in your Discord server like this:
+   
+9.  ```
+    !sherlock <username>
     ```
 
 ![RocketGod](https://github.com/RocketGod-git/shell-access-discord-bot/assets/57732082/c68635fa-b89d-4f74-a1cb-5b5351c22c98)
