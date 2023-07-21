@@ -8,7 +8,7 @@
     ```
 2. Clone the Watson repository to your local machine:
     ```
-    git clone https://github.com/RocketGod-git/watson.git
+    git clone https://github.com/RocketGod-git/watson
     ```
 3. Install the necessary Python packages. This bot requires Python 3.7 or newer, and the discord.py library:
     ```
