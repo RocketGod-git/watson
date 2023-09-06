@@ -6,126 +6,161 @@
 #         \/              \/      \/     \/               \/              \/  
 #
 # Discord bot for Sherlock by RocketGod
-# Edit config.json and run watson.py after the bot has been invited to your Discord server
-# Use !sherlock <username> on your Discord Server
-# Arguments like (!sherlock --help) or (!sherlock --nsfw rocketgod) work fine
-#
 # https://github.com/RocketGod-git/watson
 
-import discord
-from discord.ext import commands
-import os
 import json
-import asyncio
+import logging
 import platform
 import time
+import discord
+from discord import Embed
+import os
+import asyncio
 
-# Initialize the bot
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+logging.basicConfig(level=logging.INFO)
 
-# Function to execute the Sherlock command and return the result as a string
-async def execute_sherlock(ctx, *args):
+def load_config():
+    try:
+        with open('config.json', 'r') as file:
+            return json.load(file)
+    except Exception as e:
+        logging.error(f"Error loading configuration: {e}")
+        return None
+
+async def execute_sherlock(interaction, *args):
     python_interpreter = "python3" if platform.system() == "Linux" else "python"
-    username = None if args[-1] == "--help" else args[-1]
-    filename = f"{username}.txt" if username else None
-    
-    # Check if the file already exists and get its last modified time
-    if filename and os.path.exists(filename):
+    username = args[0]
+    filename = f"{username}.txt"
+
+    if os.path.exists(filename):
         last_modified_time = os.path.getmtime(filename)
     else:
         last_modified_time = None
 
-    command = [python_interpreter, "sherlock.py"] + list(args)
-    print(f"Sending command to sherlock.py: {' '.join(command)}")
+    command = [python_interpreter, "../sherlock/sherlock.py"] + list(args)
     process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     stdout, stderr = await process.communicate()
 
-    print(f"Command output: {stdout.decode()}")
-    print(f"Command error output: {stderr.decode()}")
-
     if process.returncode != 0:
-        print(f"An error occurred while executing the command: {stderr.decode()}")
-        await ctx.send(f"An error occurred while executing the command: {stderr.decode()}")
+        await handle_errors(interaction, f"An error occurred: {stderr.decode()}")
         return
 
-    # Wait for the file to be updated
     if filename:
         while last_modified_time == os.path.getmtime(filename):
             time.sleep(1)
 
-    print(f"Sherlock execution finished for username {username if username else 'help'}.")
+class aclient(discord.Client):
+    def __init__(self) -> None:
+        super().__init__(intents=discord.Intents.default())
+        self.tree = discord.app_commands.CommandTree(self)
+        self.activity = discord.Activity(type=discord.ActivityType.watching, name="Social media usernames")
+        self.discord_message_limit = 2000
 
-    # If --help is used, return stdout. Otherwise, return None.
-    return stdout.decode() if "--help" in args else None
+    async def send_split_messages(self, interaction, message: str, require_response=True):
 
-# Coroutine for the spinner
-async def spinner(ctx, username):
-    spinner = "|/-\\"
-    message = await ctx.send(f"Searching for `{username}` {spinner[0]}")
-    print(f"Started searching for `{username}`.")
-    for i in range(100):  # Adjusted the speed of spinner by increasing sleep time and reducing iterations
-        await asyncio.sleep(0.5)
-        await message.edit(content=f"Searching for `{username}` {spinner[i % len(spinner)]}")
-    await message.edit(content=f"Search for `{username}` completed.")
-    print(f"Search for `{username}` completed.")
+        if not message.strip():
+            logging.warning("Attempted to send an empty message.")
+            return
 
-# Bot command to search for a username on social networks using Sherlock
-@bot.command()
-@commands.cooldown(5, 60.0, commands.BucketType.user)
-async def sherlock(ctx, *args):
-    if not args:
-        print("Arguments not specified.")
-        await ctx.send("You must specify some arguments.")
-        return
+        lines = message.split("\n")
+        chunks = []
+        current_chunk = ""
 
-    username = None if args[-1] == "--help" else args[-1]
-    print(f"Executing Sherlock for username {username if username else 'help'}.")
+        for line in lines:
+            if len(current_chunk) + len(line) + 1 > self.discord_message_limit:
+                chunks.append(current_chunk)
+                current_chunk = line + "\n"
+            else:
+                current_chunk += line + "\n"
 
-    if username:
-        task2 = asyncio.create_task(spinner(ctx, username))
+        if current_chunk:
+            chunks.append(current_chunk)
 
-    help_output = await execute_sherlock(ctx, *args)
-    
-    # Sending the results to the same Discord channel
-    print("Sending Sherlock result to Discord channel.")
-    
-    if username:
-        with open(f"{username}.txt", "r") as f:
-            output = f.read()
-    else:
-        output = help_output  # Use the stdout from --help.
+        if not chunks:
+            logging.warning("No chunks generated from the message.")
+            return
 
-    # Break the output into chunks that are small enough for Discord
-    chunks = [output[i:i+2000] for i in range(0, len(output), 2000)]
+        if require_response and not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=False)
 
-    for chunk in chunks:
-        await ctx.send(chunk)
+        try:
+            await interaction.followup.send(content=chunks[0], ephemeral=False)
+            chunks = chunks[1:]  
+        except Exception as e:
+            logging.error(f"Failed to send the first chunk via followup. Error: {e}")
 
-    # Then wait for the spinner task to finish
-    if username:
-        await task2
+        for chunk in chunks:
+            try:
+                await interaction.channel.send(chunk)
+            except Exception as e:
+                logging.error(f"Failed to send a message chunk to the channel. Error: {e}")
 
-# Command to handle errors
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandInvokeError):
-        print("An error occurred while executing the command.")
-        await ctx.send("An error occurred while executing the command.")
-    elif isinstance(error, commands.MissingRequiredArgument):
-        print("Username not specified.")
-        await ctx.send("You must specify a username.")
-    elif isinstance(error, commands.CommandOnCooldown):
-        print("Command on cooldown.")
-        await ctx.send("You're doing that too often. Please wait a while before trying again.")
+async def handle_errors(interaction, error, error_type="Error"):
+    error_message = f"{error_type}: {error}"
+    logging.error(f"Error for user {interaction.user}: {error_message}")  # Log the error in the terminal
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(error_message)
+        else:
+            await interaction.response.send_message(error_message, ephemeral=True)
+    except discord.HTTPException as http_err:
+        logging.warning(f"HTTP error while responding to {interaction.user}: {http_err}")
+        await interaction.followup.send(error_message)
+    except Exception as unexpected_err:
+        logging.error(f"Unexpected error while responding to {interaction.user}: {unexpected_err}")
+        await interaction.followup.send("An unexpected error occurred. Please try again later.")
 
-# Load the bot token
-with open("config.json") as f:
-    config = json.load(f)
-    token = config.get("discord_bot_token")
+def run_discord_bot(token):
+    client = aclient()
 
-# Run the bot
-try:
-    print("Starting the bot.")
-    bot.run(token)
-except Exception as e:
-    print(f"Could not start the bot: {e}")
+    @client.event
+    async def on_ready():
+        await client.tree.sync()
+        logging.info(f'{client.user} is online.')
+
+    @client.tree.command(name="sherlock", description="Search for a username on social networks using Sherlock")
+    async def sherlock(interaction: discord.Interaction, username: str, similar: bool = False):
+        await interaction.response.defer(ephemeral=False)
+        
+        logging.info(f"User {interaction.user} from {interaction.guild if interaction.guild else 'DM'} executed '/sherlock' with username '{username}' and similar option set to {similar}.") 
+
+        args = [username]
+        args.append("--nsfw")
+        
+        if similar:
+            formatted_username = username.replace("{", "{%}")
+            args[0] = formatted_username
+
+        try:
+            await execute_sherlock(interaction, *args)
+
+            with open(f"{username}.txt", "r") as f:
+                output = f.read()
+            await client.send_split_messages(interaction, output)
+        except Exception as e:
+            await handle_errors(interaction, str(e))
+
+    @client.tree.command(name="help", description="Displays a list of available commands.")
+    async def help_command(interaction: discord.Interaction):
+        
+        logging.info(f"User {interaction.user} from {interaction.guild if interaction.guild else 'DM'} executed '/help'.") 
+
+        try:
+            embed = discord.Embed(title="Available Commands", description="Here are the commands you can use with this bot:", color=0x3498db)
+            embed.add_field(name="🔍 Sherlock Command", value="Search for a username across various social networks using the Sherlock tool.", inline=False)
+            sherlock_command_description = (
+                "**Usage**:\n"
+                "`/sherlock [username]` - Search for a specific username.\n"
+                "\n**Options**:\n"
+                "`similar` - Check similar usernames by replacing with variations (e.g., '_', '-', '.')"
+            )
+            embed.add_field(name="Details & Options", value=sherlock_command_description, inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=False)
+        except Exception as e:
+            await handle_errors(interaction, str(e))
+
+    client.run(token)
+
+if __name__ == "__main__":
+    config = load_config()
+    run_discord_bot(config.get("discord_bot_token"))
