@@ -53,7 +53,7 @@ class aclient(discord.Client):
     def __init__(self) -> None:
         super().__init__(intents=discord.Intents.default())
         self.tree = discord.app_commands.CommandTree(self)
-        self.activity = discord.Activity(type=discord.ActivityType.watching, name="Social media usernames")
+        self.activity = discord.Activity(type=discord.ActivityType.watching, name="/sherlock")
         self.discord_message_limit = 2000
 
     async def send_split_messages(self, interaction, message: str, require_response=True):
