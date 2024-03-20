@@ -17,7 +17,17 @@ from discord import Embed
 import os
 import asyncio
 
+
+class NoShardResumeFilter(logging.Filter):
+    def filter(self, record):
+        if 'discord.gateway' in record.name and 'has successfully RESUMED session' in record.message:
+            return False
+        return True
+
+logger = logging.getLogger()
+logger.addFilter(NoShardResumeFilter())
 logging.basicConfig(level=logging.INFO)
+
 
 def load_config():
     try:
@@ -26,6 +36,7 @@ def load_config():
     except Exception as e:
         logging.error(f"Error loading configuration: {e}")
         return None
+
 
 async def execute_sherlock(interaction, *args):
     python_interpreter = "python3" if platform.system() == "Linux" else "python"
@@ -48,6 +59,7 @@ async def execute_sherlock(interaction, *args):
     if filename:
         while last_modified_time == os.path.getmtime(filename):
             time.sleep(1)
+
 
 class aclient(discord.Client):
     def __init__(self) -> None:
@@ -95,6 +107,7 @@ class aclient(discord.Client):
             except Exception as e:
                 logging.error(f"Failed to send a message chunk to the channel. Error: {e}")
 
+
 async def handle_errors(interaction, error, error_type="Error"):
     error_message = f"{error_type}: {error}"
     logging.error(f"Error for user {interaction.user}: {error_message}")  # Log the error in the terminal
@@ -110,26 +123,43 @@ async def handle_errors(interaction, error, error_type="Error"):
         logging.error(f"Unexpected error while responding to {interaction.user}: {unexpected_err}")
         await interaction.followup.send("An unexpected error occurred. Please try again later.")
 
+
 def run_discord_bot(token):
     client = aclient()
 
     @client.event
     async def on_ready():
         await client.tree.sync()
+
+        logging.info(f"Bot {client.user} is ready and running in {len(client.guilds)} servers.")
+        for guild in client.guilds:
+            # Attempt to fetch the owner as a member of the guild
+            try:
+                owner = await guild.fetch_member(guild.owner_id)
+                owner_name = f"{owner.name}#{owner.discriminator}"
+            except Exception as e:
+                logging.error(f"Could not fetch owner for guild: {guild.name}, error: {e}")
+                owner_name = "Could not fetch owner"
+            
+            logging.info(f" - {guild.name} (Owner: {owner_name})")
+
+        server_count = len(client.guilds)
+        activity_text = f"/sherlock on {server_count} servers"
+        await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=activity_text))
+
         logging.info(f'{client.user} is online.')
 
     @client.tree.command(name="sherlock", description="Search for a username on social networks using Sherlock")
-    async def sherlock(interaction: discord.Interaction, username: str, similar: bool = False):
+    async def sherlock(interaction: discord.Interaction, username: str):
         await interaction.response.defer(ephemeral=False)
         
-        logging.info(f"User {interaction.user} from {interaction.guild if interaction.guild else 'DM'} executed '/sherlock' with username '{username}' and similar option set to {similar}.") 
+        logging.info(f"User {interaction.user} from {interaction.guild if interaction.guild else 'DM'} executed '/sherlock' with username '{username}'.") 
 
         args = [username]
         args.append("--nsfw")
         
-        if similar:
-            formatted_username = username.replace("{", "{%}")
-            args[0] = formatted_username
+        formatted_username = username.replace("{", "{%}")
+        args[0] = formatted_username
 
         try:
             await execute_sherlock(interaction, *args)
@@ -150,16 +180,15 @@ def run_discord_bot(token):
             embed.add_field(name="🔍 Sherlock Command", value="Search for a username across various social networks using the Sherlock tool.", inline=False)
             sherlock_command_description = (
                 "**Usage**:\n"
-                "`/sherlock [username]` - Search for a specific username.\n"
-                "\n**Options**:\n"
-                "`similar` - Check similar usernames by replacing with variations (e.g., '_', '-', '.')"
+                "`/sherlock [username]` - Search for a specific username and its variations."
             )
-            embed.add_field(name="Details & Options", value=sherlock_command_description, inline=False)
+            embed.add_field(name="Details", value=sherlock_command_description, inline=False)
             await interaction.response.send_message(embed=embed, ephemeral=False)
         except Exception as e:
             await handle_errors(interaction, str(e))
 
     client.run(token)
+
 
 if __name__ == "__main__":
     config = load_config()
