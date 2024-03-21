@@ -20,12 +20,13 @@ import asyncio
 
 class NoShardResumeFilter(logging.Filter):
     def filter(self, record):
-        if 'discord.gateway' in record.name and 'has successfully RESUMED session' in record.message:
+        if 'discord.gateway' in record.name and 'has successfully RESUMED session' in record.msg:
             return False
         return True
 
-logger = logging.getLogger()
-logger.addFilter(NoShardResumeFilter())
+discord_gateway_logger = logging.getLogger('discord.gateway')
+discord_gateway_logger.addFilter(NoShardResumeFilter())
+
 logging.basicConfig(level=logging.INFO)
 
 
@@ -43,22 +44,33 @@ async def execute_sherlock(interaction, *args):
     username = args[0]
     filename = f"{username}.txt"
 
-    if os.path.exists(filename):
-        last_modified_time = os.path.getmtime(filename)
-    else:
-        last_modified_time = None
+    await interaction.followup.send(f"Searching `{username}` for {interaction.user.mention}")
 
     command = [python_interpreter, "../sherlock/sherlock.py"] + list(args)
     process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await process.communicate()
+
+    while True:
+        output = await process.stdout.readline()
+        if not output:
+            break
+        output = output.decode().strip()
+        if output:
+            await interaction.channel.send(output)
+
+    _, stderr = await process.communicate()
 
     if process.returncode != 0:
         await handle_errors(interaction, f"An error occurred: {stderr.decode()}")
         return
 
-    if filename:
-        while last_modified_time == os.path.getmtime(filename):
-            time.sleep(1)
+    try:
+        with open(filename, "rb") as f:
+            await interaction.channel.send(file=discord.File(f, filename=filename))
+            
+    except FileNotFoundError:
+        await interaction.channel.send(f"No results found for `{username}`.")
+
+    await interaction.channel.send(f"Finished report on `{username}` for {interaction.user.mention}")
 
 
 class aclient(discord.Client):
@@ -67,45 +79,6 @@ class aclient(discord.Client):
         self.tree = discord.app_commands.CommandTree(self)
         self.activity = discord.Activity(type=discord.ActivityType.watching, name="/sherlock")
         self.discord_message_limit = 2000
-
-    async def send_split_messages(self, interaction, message: str, require_response=True):
-
-        if not message.strip():
-            logging.warning("Attempted to send an empty message.")
-            return
-
-        lines = message.split("\n")
-        chunks = []
-        current_chunk = ""
-
-        for line in lines:
-            if len(current_chunk) + len(line) + 1 > self.discord_message_limit:
-                chunks.append(current_chunk)
-                current_chunk = line + "\n"
-            else:
-                current_chunk += line + "\n"
-
-        if current_chunk:
-            chunks.append(current_chunk)
-
-        if not chunks:
-            logging.warning("No chunks generated from the message.")
-            return
-
-        if require_response and not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=False)
-
-        try:
-            await interaction.followup.send(content=chunks[0], ephemeral=False)
-            chunks = chunks[1:]  
-        except Exception as e:
-            logging.error(f"Failed to send the first chunk via followup. Error: {e}")
-
-        for chunk in chunks:
-            try:
-                await interaction.channel.send(chunk)
-            except Exception as e:
-                logging.error(f"Failed to send a message chunk to the channel. Error: {e}")
 
 
 async def handle_errors(interaction, error, error_type="Error"):
@@ -163,29 +136,9 @@ def run_discord_bot(token):
 
         try:
             await execute_sherlock(interaction, *args)
-
-            with open(f"{username}.txt", "r") as f:
-                output = f.read()
-            await client.send_split_messages(interaction, output)
         except Exception as e:
             await handle_errors(interaction, str(e))
 
-    @client.tree.command(name="help", description="Displays a list of available commands.")
-    async def help_command(interaction: discord.Interaction):
-        
-        logging.info(f"User {interaction.user} from {interaction.guild if interaction.guild else 'DM'} executed '/help'.") 
-
-        try:
-            embed = discord.Embed(title="Available Commands", description="Here are the commands you can use with this bot:", color=0x3498db)
-            embed.add_field(name="🔍 Sherlock Command", value="Search for a username across various social networks using the Sherlock tool.", inline=False)
-            sherlock_command_description = (
-                "**Usage**:\n"
-                "`/sherlock [username]` - Search for a specific username and its variations."
-            )
-            embed.add_field(name="Details", value=sherlock_command_description, inline=False)
-            await interaction.response.send_message(embed=embed, ephemeral=False)
-        except Exception as e:
-            await handle_errors(interaction, str(e))
 
     client.run(token)
 
