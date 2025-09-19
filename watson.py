@@ -56,7 +56,7 @@ async def send_message_with_retry(channel, content, max_retries=3):
 async def run_sherlock_process(args, channel, timeout=300):
     sherlock_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     process = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "sherlock.sherlock", *args,
+        sys.executable, "-m", "sherlock_project.sherlock", *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=sherlock_dir
