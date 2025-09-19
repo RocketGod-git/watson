@@ -1,1 +1,6 @@
 discord
+tomli
+pandas
+requests
+requests_futures
+colorama
